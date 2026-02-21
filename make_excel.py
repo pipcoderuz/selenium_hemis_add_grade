@@ -6,6 +6,7 @@ from config import HEMIS_TOKEN
 
 EDUCATION_YEAR = 2025
 SEMESTR = 13  # 11->1-semestr, 12->2-semestr
+# 13 -> Yakuniy Nazorat; 12 -> Oraliq nazorat; 11 -> Joriy nazorat; 17 -> 1-on; 18 -> 2-on;
 EXAM_TYPE = 13
 
 headers = {
@@ -189,7 +190,7 @@ def create_excel_report():
         student_info = fetch_student_info(student_id)
         if student_info:
             students_info.append(student_info)
-            if len(students_info) % 50 == 0:  # Progress indicator
+            if len(students_info) % 100 == 0:  # Progress indicator
                 print(
                     f"Fetched {len(students_info)}/{len(unique_student_ids)} students")
         time.sleep(API_DELAY)
@@ -233,18 +234,19 @@ def create_excel_report():
         # Define the columns we want in the final Excel
         output_columns = {
             'exam_id': 'exam_id',
-            'student_id': 'student_id',
             'student_hemis_id': 'student_hemis_id',
             'student_full_name': 'student_full_name',
-            'subject_name': 'subject_name',
-            'subject_code': 'subject_code',
-            'faculty_name': 'faculty_name',
-            'department_name': 'department_name',
-            'exam_type_name': 'exam_type_name',
-            'exam_type_code': 'exam_type_code',
-            'education_year_name': 'education_year_name',
-            'education_year_code': 'education_year_code',
             'group_name': 'group_name',
+            'subject_name': 'subject_name',
+            'exam_type_name': 'exam_type_name',
+            'grade': '',
+            'education_year_name': 'education_year_name',
+            'department_name': 'department_name',
+            'faculty_name': 'faculty_name',
+            'student_id': 'student_id',
+            'subject_code': 'subject_code',
+            'exam_type_code': 'exam_type_code',
+            'education_year_code': 'education_year_code',
         }
 
         # Create final DataFrame with only required columns that exist
