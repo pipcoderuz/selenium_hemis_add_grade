@@ -15,3 +15,5 @@ else:
 
 # todo: .env file datas
 HEMIS_TOKEN = env.str('HEMIS_TOKEN')
+LOGIN_VALUE = env.str('LOGIN_VALUE')
+PASSWORD_VALUE = env.str('PASSWORD_VALUE')
