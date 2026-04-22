@@ -1,290 +1,390 @@
 import requests
-import time
 import pandas as pd
+from datetime import datetime
+import time
+from typing import List, Dict, Any, Optional
 from config import HEMIS_TOKEN
 
-
-EDUCATION_YEAR = 2025
-SEMESTR = 13  # 11->1-semestr, 12->2-semestr
-# 13 -> Yakuniy Nazorat; 12 -> Oraliq nazorat; 11 -> Joriy nazorat; 17 -> 1-on; 18 -> 2-on;
-EXAM_TYPE = 13
-
+# Konfiguratsiya
+BASE_URL = "https://talaba.timeedu.uz/rest/v1/data"
 headers = {
     "Authorization": f"Bearer {HEMIS_TOKEN}"
 }
-API_DELAY = 0.1  # 100ms delay between requests
-PAGE_LIMIT = 200  # Maximum items per request
+API_DELAY = 0.05  # 50ms delay
+PAGE_LIMIT = 200
 
 
-def fetch_student_info(student_id):
-    """Fetch individual student details from student-info API"""
-    response = requests.get(
-        f"https://talaba.timeedu.uz/rest/v1/data/student-info?student_id={student_id}",
-        headers=headers
-    )
+def extract_data_from_response(response_data: Any) -> Optional[List[Dict]]:
+    """
+    API javobidan haqiqiy ma'lumotlarni ajratib olish.
+    Format: {'success': bool, 'error': str, 'data': {...}, 'code': int}
+    """
+    if isinstance(response_data, dict):
+        # Agar 'data' kaliti bo'lsa
+        if 'data' in response_data:
+            data = response_data['data']
 
-    if response.status_code == 200:
-        data = response.json()
-        student_data = data.get("data", {})
-        return {
-            'student_id': student_data.get('id'),
-            'student_full_name': student_data.get('full_name'),
-            'student_hemis_id': student_data.get('student_id_number'),
-        }
+            # Data ichida 'items' bo'lishi mumkin
+            if isinstance(data, dict) and 'items' in data:
+                return data['items']
+            # Data to'g'ridan-to'g'ri list bo'lishi mumkin
+            elif isinstance(data, list):
+                return data
+            # Data dict bo'lsa, uni listga o'rash
+            elif isinstance(data, dict):
+                return [data]
+
+        # Agar 'items' to'g'ridan-to'g'ri kalit bo'lsa
+        elif 'items' in response_data:
+            return response_data['items']
+
+    # Agar list bo'lsa, to'g'ridan-to'g'ri qaytarish
+    elif isinstance(response_data, list):
+        return response_data
+
     return None
 
 
-def fetch_student_subjects(education_year, semester):
-    """Fetch subjects assigned to students (student-subject-list API)"""
+def fetch_all_pages(endpoint: str, params: Dict = None) -> List[Dict]:
+    """Barcha sahifalarni yuklab olish"""
+    all_data = []
     page = 1
-    all_subjects = []
 
-    # This API returns which students are assigned to which subjects
-    # Key fields: _student (student_id), _group (group_id), _subject (subject_id)
+    if params is None:
+        params = {}
+
+    params['limit'] = PAGE_LIMIT
 
     while True:
-        response = requests.get(
-            f"https://talaba.timeedu.uz/rest/v1/data/student-subject-list",
-            params={
-                "limit": PAGE_LIMIT,
-                "page": page,
-                "_education_year": education_year,
-                "_semester": semester,
-            },
-            headers=headers
-        )
+        params['page'] = page
+        try:
+            response = requests.get(
+                f"{BASE_URL}/{endpoint}",
+                headers=headers,
+                params=params
+            )
+            response.raise_for_status()
+            response_data = response.json()
 
-        if response.status_code == 200:
-            data = response.json()
-            items = data.get("data", {}).get("items", [])
-            pagination = data.get("data", {}).get("pagination", {})
-            total_pages = pagination.get("pageCount", 0)
+            # API muvaffaqiyatli ekanligini tekshirish
+            if isinstance(response_data, dict):
+                if response_data.get('success') is False:
+                    error_msg = response_data.get('error', 'Noma\'lum xatolik')
+                    print(f"  API xatolik: {error_msg}")
+                    break
 
-            for item in items:
-                curriculum_subject = item.get("curriculumSubject", {})
-                subject = curriculum_subject.get("subject", {})
+                # Haqiqiy ma'lumotlarni ajratib olish
+                data = extract_data_from_response(response_data)
+            else:
+                data = response_data
 
-                all_subjects.append({
-                    'student_id': item.get('_student'),
-                    'group_id': item.get('_group'),
-                    'subject_id': subject.get('id'),
-                    'subject_name': subject.get('name'),
-                    'subject_code': subject.get('code'),
-                })
+            if not data:  # Bo'sh array qaytsa to'xtash
+                break
 
-            print(
-                f"Student-Subjects: Page {page}/{total_pages} loaded ({len(items)} items)")
+            all_data.extend(data)
+            print(f"  Yuklandi: {endpoint} - Sahifa {page} ({len(data)} ta)")
 
-            if page >= total_pages:
+            if len(data) < PAGE_LIMIT:  # Oxirgi sahifa
                 break
 
             page += 1
             time.sleep(API_DELAY)
-        else:
-            print(f"Error fetching student-subjects: {response.status_code}")
+
+        except Exception as e:
+            print(f"  Xatolik {endpoint} sahifa {page}: {e}")
             break
 
-    return all_subjects
+    return all_data
 
 
-def fetch_exam_list(education_year, semester, exam_type):
-    """Fetch exam list (subject-exam-list API)"""
-    page = 1
-    all_exams = []
+def fetch_all_groups() -> List[Dict]:
+    """Barcha guruhlarni olish"""
+    print("\n📚 Guruhlar yuklanmoqda...")
+    groups = fetch_all_pages("group-list")
 
-    # This API returns exams with their group_id
-    # Key fields: id (exam_id), group.id (group_id), subject.id (subject_id)
-
-    while True:
-        response = requests.get(
-            f"https://talaba.timeedu.uz/rest/v1/data/subject-exam-list",
-            params={
-                "limit": PAGE_LIMIT,
-                "page": page,
-                "_semester": semester,
-                "_exam_type": exam_type,
-                "_education_year": education_year
-            },
-            headers=headers
-        )
-
-        if response.status_code == 200:
-            data = response.json()
-            items = data.get("data", {}).get("items", [])
-            pagination = data.get("data", {}).get("pagination", {})
-            total_pages = pagination.get("pageCount", 0)
-
-            for item in items:
-                subject = item.get("subject", {})
-                semester_info = item.get("semester", {})
-                education_year_info = item.get("educationYear", {})
-                group = item.get("group", {})
-                exam_type_info = item.get("examType", {})
-                faculty = item.get("faculty", {})
-                department = item.get("department", {})
-
-                all_exams.append({
-                    'exam_id': item.get('id'),
-                    'group_id': group.get('id'),
-                    'group_name': group.get('name'),
-                    'subject_id': subject.get('id'),
-                    'subject_name': subject.get('name'),
-                    'subject_code': subject.get('code'),
-                    'faculty_id': faculty.get('id'),
-                    'faculty_name': faculty.get('name'),
-                    'department_id': department.get('id'),
-                    'department_name': department.get('name'),
-                    'exam_type_code': exam_type_info.get('code'),
-                    'exam_type_name': exam_type_info.get('name'),
-                    'education_year_code': education_year_info.get('code'),
-                    'education_year_name': education_year_info.get('name'),
-                    'semester_code': semester_info.get('code'),
-                    'semester_name': semester_info.get('name'),
-                })
-
+    if groups:
+        print(f"  ✅ Jami {len(groups)} ta guruh yuklandi")
+        # Debug: Birinchi guruhni ko'rsatish
+        if len(groups) > 0:
             print(
-                f"Exams: Page {page}/{total_pages} loaded ({len(items)} items)")
+                f"  Namuna: {groups[0].get('name', 'N/A')} (ID: {groups[0].get('id', 'N/A')})")
 
-            if page >= total_pages:
-                break
-
-            page += 1
-            time.sleep(API_DELAY)
-        else:
-            print(f"Error fetching exams: {response.status_code}")
-            break
-
-    return all_exams
+    return groups
 
 
-def create_excel_report():
-    """Main function to fetch all data and create Excel report"""
+def fetch_exams_by_group(group_id: int) -> List[Dict]:
+    """Guruh bo'yicha imtihonlarni olish"""
+    return fetch_all_pages("subject-exam-list", {"_group": group_id})
 
-    # STEP 1: Fetch all exams
-    print("Fetching exam list...")
-    exams_data = fetch_exam_list(
-        education_year=EDUCATION_YEAR,
-        semester=SEMESTR,
-        exam_type=EXAM_TYPE
-    )
-    exams_df = pd.DataFrame(exams_data)
-    print(f"Total exams fetched: {len(exams_df)}")
 
-    # STEP 2: Fetch all student-subject assignments
-    print("\nFetching student-subject assignments...")
-    subjects_data = fetch_student_subjects(
-        education_year=EDUCATION_YEAR,
-        semester=SEMESTR
-    )
-    subjects_df = pd.DataFrame(subjects_data)
-    print(f"Total student-subject records fetched: {len(subjects_df)}")
+def fetch_students_by_group(group_id: int) -> List[Dict]:
+    """Guruh bo'yicha talabalarni olish"""
+    return fetch_all_pages("student-list", {"_group": group_id})
 
-    # STEP 3: Get unique student IDs
-    unique_student_ids = subjects_df['student_id'].unique(
-    ) if not subjects_df.empty else []
-    print(f"\nFetching info for {len(unique_student_ids)} unique students...")
 
-    # STEP 4: Fetch student info for each unique student
-    students_info = []
-    for student_id in unique_student_ids:
-        student_info = fetch_student_info(student_id)
-        if student_info:
-            students_info.append(student_info)
-            if len(students_info) % 100 == 0:  # Progress indicator
+def create_exam_student_excel():
+    """Asosiy funksiya - Excel fayl yaratish"""
+    print("=" * 60)
+    print("🎓 HEMIS Imtihon-Talaba jadvali generatsiyasi")
+    print("=" * 60)
+
+    # 1. Barcha guruhlarni olish
+    groups = fetch_all_groups()
+
+    if not groups:
+        print("\n❌ Guruhlar topilmadi!")
+        return None
+
+    print(f"\n✅ Jami {len(groups)} ta guruh topildi")
+
+    # Excel uchun ma'lumotlar
+    excel_data = []
+    processed_groups = 0
+    skipped_groups = 0
+
+    # 2. Har bir guruh uchun
+    for idx, group in enumerate(groups, 1):
+        try:
+            group_id = group.get('id')
+            group_name = group.get('name', 'Noma\'lum')
+
+            if not group_id:
                 print(
-                    f"Fetched {len(students_info)}/{len(unique_student_ids)} students")
-        time.sleep(API_DELAY)
+                    f"\n⚠️ [{idx}/{len(groups)}] Guruhda ID topilmadi, o'tkazib yuborildi")
+                skipped_groups += 1
+                continue
 
-    students_df = pd.DataFrame(students_info)
-    print(f"Total student info records: {len(students_df)}")
+            print(
+                f"\n📋 [{idx}/{len(groups)}] Guruh: {group_name} (ID: {group_id})")
 
-    # STEP 5: First, merge student-subjects with student info to get full names
-    print("\nMerging student data...")
-    if not subjects_df.empty and not students_df.empty:
-        students_with_names = pd.merge(
-            subjects_df,
-            students_df,
-            on='student_id',
-            how='inner'  # Only keep students we have info for
-        )
+            # 3. Guruhning imtihonlarini olish
+            exams = fetch_exams_by_group(group_id)
+            print(f"  📝 Imtihonlar: {len(exams)} ta")
+
+            if not exams:
+                print(f"  ⏭️  Imtihonlar yo'q, o'tkazib yuborildi")
+                skipped_groups += 1
+                continue
+
+            # 4. Guruhning talabalarini olish
+            students = fetch_students_by_group(group_id)
+            print(f"  👥 Talabalar: {len(students)} ta")
+
+            if not students:
+                print(f"  ⏭️  Talabalar yo'q, o'tkazib yuborildi")
+                skipped_groups += 1
+                continue
+
+            # 5. Har bir imtihon va talaba uchun yozuv yaratish
+            records_added = 0
+            for exam in exams:
+                if not isinstance(exam, dict):
+                    continue
+
+                exam_id = exam.get('id')
+
+                # Imtihon ma'lumotlari
+                subject = exam.get('subject', {})
+                subject_id = subject.get('id') if isinstance(
+                    subject, dict) else None
+                subject_name = subject.get('name') if isinstance(
+                    subject, dict) else None
+
+                exam_type = exam.get('examType', {})
+                exam_type_name = exam_type.get(
+                    'name') if isinstance(exam_type, dict) else None
+                exam_type_code = exam_type.get(
+                    'code') if isinstance(exam_type, dict) else None
+
+                faculty = exam.get('faculty', {})
+                faculty_name = faculty.get('name') if isinstance(
+                    faculty, dict) else None
+
+                department = exam.get('department', {})
+                department_name = department.get(
+                    'name') if isinstance(department, dict) else None
+
+                education_year = exam.get('educationYear', {})
+                education_year_name = education_year.get(
+                    'name') if isinstance(education_year, dict) else None
+
+                semester = exam.get('semester', {})
+                semester_name = semester.get(
+                    'name') if isinstance(semester, dict) else None
+
+                # Har bir talaba uchun
+                for student in students:
+                    if not isinstance(student, dict):
+                        continue
+
+                    excel_data.append({
+                        'exam_id': exam_id,
+                        'student_id': student.get('id'),
+                        'student_hemis_id': student.get('student_id_number'),
+                        'student_full_name': student.get('full_name'),
+                        'group_id': group_id,
+                        'group_name': group_name,
+                        'subject_id': subject_id,
+                        'subject_name': subject_name,
+                        'exam_type_name': exam_type_name,
+                        'exam_type_code': exam_type_code,
+                        'faculty_name': faculty_name,
+                        'department_name': department_name,
+                        'education_year_name': education_year_name,
+                        'semester_name': semester_name,
+                        'grade': ''  # Bo'sh ustun
+                    })
+                    records_added += 1
+
+            print(f"  ✅ {records_added} ta yozuv qo'shildi")
+            processed_groups += 1
+
+            # Delay qo'shish (guruhlar orasida)
+            time.sleep(API_DELAY * 2)
+
+        except Exception as e:
+            print(f"  ❌ Xatolik: {e}")
+            skipped_groups += 1
+            continue
+
+    # 6. DataFrame yaratish va Excel ga saqlash
+    if excel_data:
+        df = pd.DataFrame(excel_data)
+
+        # Fayl nomi (sana va vaqt bilan)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"exam_report.xlsx"
+
+        # Excel faylga saqlash
+        with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Imtihonlar', index=False)
+
+            # Ustunlar kengligini sozlash
+            worksheet = writer.sheets['Imtihonlar']
+            for column in worksheet.columns:
+                max_length = 0
+                column_letter = column[0].column_letter
+                for cell in column:
+                    try:
+                        if len(str(cell.value)) > max_length:
+                            max_length = len(str(cell.value))
+                    except:
+                        pass
+                adjusted_width = min(max_length + 2, 50)
+                worksheet.column_dimensions[column_letter].width = adjusted_width
+
+        print("\n" + "=" * 60)
+        print(f"✅ Muvaffaqiyatli yakunlandi!")
+        print(f"📊 Jami yozuvlar: {len(excel_data)}")
+        print(f"📁 Fayl nomi: {filename}")
+        print(f"📈 Qayta ishlangan guruhlar: {processed_groups}")
+        print(f"⏭️  O'tkazib yuborilgan: {skipped_groups}")
+        print("=" * 60)
+
+        # Statistikani ko'rsatish
+        print("\n📈 Statistika:")
+        print(f"  - Guruhlar soni: {df['group_id'].nunique()}")
+        print(f"  - Imtihonlar soni: {df['exam_id'].nunique()}")
+        print(f"  - Talabalar soni: {df['student_id'].nunique()}")
+        print(f"  - Fanlar soni: {df['subject_id'].nunique()}")
+
+        # Fanlar ro'yxati
+        print("\n📚 Fanlar:")
+        for subject in df['subject_name'].unique():
+            if pd.notna(subject):
+                count = df[df['subject_name'] == subject].shape[0]
+                print(f"  - {subject}: {count} ta baholash")
+
+        return df
     else:
-        students_with_names = subjects_df.copy()
+        print("\n❌ Hech qanday ma'lumot topilmadi!")
+        return None
 
-    print(f"Students with names: {len(students_with_names)}")
 
-    # STEP 6: Now merge exams with students based on group_id AND subject_id
-    print("Merging exams with students...")
+def fetch_single_group_data(group_id: int):
+    """Faqat bitta guruh uchun ma'lumot olish (test uchun)"""
+    print(f"\n🎯 Test: Faqat {group_id} guruhi uchun")
 
-    if not exams_df.empty and not students_with_names.empty:
-        # Critical: Merge on both group_id AND subject_id
-        # This ensures a student gets an exam only if they are in the same group AND study the same subject
-        final_df = pd.merge(
-            exams_df,
-            students_with_names,
-            on=['group_id', 'subject_id'],  # Merge on both keys!
-            how='inner'  # Only keep matches where student belongs to that group and subject
-        )
-    else:
-        final_df = pd.DataFrame()
+    excel_data = []
 
-    print(f"Final records after merge: {len(final_df)}")
+    # Imtihonlarni olish
+    exams = fetch_exams_by_group(group_id)
+    print(f"📝 Imtihonlar: {len(exams)} ta")
 
-    # STEP 7: Select and rename columns for final output
-    if not final_df.empty:
-        # Define the columns we want in the final Excel
-        output_columns = {
-            'exam_id': 'exam_id',
-            'student_hemis_id': 'student_hemis_id',
-            'student_full_name': 'student_full_name',
-            'group_name': 'group_name',
-            'subject_name': 'subject_name',
-            'exam_type_name': 'exam_type_name',
-            'grade': '',
-            'education_year_name': 'education_year_name',
-            'department_name': 'department_name',
-            'faculty_name': 'faculty_name',
-            'student_id': 'student_id',
-            'subject_code': 'subject_code',
-            'exam_type_code': 'exam_type_code',
-            'education_year_code': 'education_year_code',
-        }
+    if not exams:
+        print("❌ Imtihonlar topilmadi!")
+        return None
 
-        # Create final DataFrame with only required columns that exist
-        available_columns = [
-            col for col in output_columns.keys() if col in final_df.columns]
-        final_result = final_df[available_columns].copy()
+    # Talabalarni olish
+    students = fetch_students_by_group(group_id)
+    print(f"👥 Talabalar: {len(students)} ta")
 
-        # Rename columns
-        final_result.rename(columns={k: v for k, v in output_columns.items(
-        ) if k in final_df.columns}, inplace=True)
+    if not students:
+        print("❌ Talabalar topilmadi!")
+        return None
 
-        # Remove duplicates (just in case)
-        final_result.drop_duplicates(inplace=True)
+    for exam in exams:
+        for student in students:
+            excel_data.append({
+                'exam_id': exam['id'],
+                'student_id': student.get('id'),
+                'student_hemis_id': student.get('student_id_number'),
+                'student_full_name': student.get('full_name'),
+                'group_id': group_id,
+                'group_name': exam.get('group', {}).get('name'),
+                'subject_id': exam.get('subject', {}).get('id'),
+                'subject_name': exam.get('subject', {}).get('name'),
+                'exam_type_name': exam.get('examType', {}).get('name'),
+                'exam_type_code': exam.get('examType', {}).get('code'),
+                'faculty_name': exam.get('faculty', {}).get('name'),
+                'department_name': exam.get('department', {}).get('name'),
+                'education_year_name': exam.get('educationYear', {}).get('name'),
+                'semester_name': exam.get('semester', {}).get('name'),
+                'grade': ''
+            })
 
-        # Sort by exam_id and student_id for better readability
-        final_result.sort_values(['exam_id', 'student_id'], inplace=True)
-
-        # Export to Excel
-        output_file = 'exam_report.xlsx'
-        final_result.to_excel(output_file, index=False, engine='openpyxl')
-
-        print(f"\n✅ Excel file '{output_file}' created successfully!")
-        print(f"Total records: {len(final_result)}")
-        print("\nColumns in final file:")
-        for col in final_result.columns:
-            print(f"  - {col}")
-
-        # Show sample of duplicate check
-        exam_counts = final_result['exam_id'].value_counts()
-        print(f"\n📊 Statistics:")
-        print(f"  - Unique exams: {final_result['exam_id'].nunique()}")
-        print(f"  - Unique students: {final_result['student_id'].nunique()}")
-        print(
-            f"  - Average students per exam: {len(final_result)/final_result['exam_id'].nunique():.1f}")
-
-    else:
-        print("❌ No data to export!")
+    if excel_data:
+        df = pd.DataFrame(excel_data)
+        filename = f"hemis_exam_group_{group_id}.xlsx"
+        df.to_excel(filename, index=False)
+        print(f"\n✅ Saqlandi: {filename}")
+        print(f"📊 Yozuvlar soni: {len(df)}")
+        return df
+    return None
 
 
 if __name__ == "__main__":
-    create_excel_report()
+    # Token mavjudligini tekshirish
+    if not HEMIS_TOKEN:
+        print("❌ Iltimos, HEMIS_TOKEN o'zgaruvchisiga tokeningizni kiriting!")
+        print("Dastur to'xtatildi.")
+        exit(1)
+
+    try:
+        # Test uchun: faqat bitta guruhni tekshirish
+        # print("🧪 Test rejimi: IQ-121-21S guruhi tekshirilmoqda...")
+        # print("=" * 60)
+
+        # # Test qilish
+        # test_group_id = 102  # IQ-121-21S guruhi
+        # test_df = fetch_single_group_data(test_group_id)
+
+        # if test_df is not None:
+        #     print("\n" + "=" * 60)
+        #     print("✅ Test muvaffaqiyatli! To'liq eksportni boshlash...")
+        #     print("=" * 60)
+
+        #     # To'liq ma'lumot olish
+        # else:
+        #     print("\n❌ Test muvaffaqiyatsiz. API formatini tekshiring.")
+        print("=" * 60)
+        print("\n✅ Ma'lumot olish boshlandi!")
+        print("=" * 60)
+        df = create_exam_student_excel()
+
+    except KeyboardInterrupt:
+        print("\n\n⚠️ Dastur foydalanuvchi tomonidan to'xtatildi!")
+    except Exception as e:
+        print(f"\n❌ Xatolik yuz berdi: {e}")
+        import traceback
+        traceback.print_exc()

@@ -59,7 +59,7 @@ try:
 except Exception as e:
     print("Kirish tugmasi muammosi:", e)
 
-time.sleep(3)
+time.sleep(1)
 
 try:
     WebDriverWait(driver, 25).until( EC.presence_of_element_located((By.TAG_NAME, "body")))
@@ -83,6 +83,7 @@ print(f"Jami {len(grouped)} ta exam topildi.")
 
 # ==================== Har bir exam uchun ishlash ====================
 print(str(grouped))
+not_found_inputs = []
 for exam_id, group in grouped:
     exam_type_code = exam_types.get(exam_id, None)
     print(f"\n=== Exam ID: {exam_id} | Type: {exam_type_code} | Talabalar: {len(group)} ===")
@@ -101,7 +102,7 @@ for exam_id, group in grouped:
         continue
 
     driver.get(url)
-    time.sleep(2.5)
+    time.sleep(1)
 
     try:
         WebDriverWait(driver, 15).until(
@@ -134,7 +135,11 @@ for exam_id, group in grouped:
             updated += 1
             print(f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritildi")
         except NoSuchElementException:
-            print(f"  Input topilmadi → {input_name}")
+            print(f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritilmadi")
+            not_found_inputs.append({
+                "student_id": student_id,
+                "grade": grade
+            })
 
     if updated > 0:
         try:
@@ -143,6 +148,7 @@ for exam_id, group in grouped:
             )
             save_btn.click()
             print(f"Saqlash bosildi ({updated} ta yangilandi)")
+            time.sleep(1)
 
             # Yakuniy nazorat uchun alertni qabul qilish
             if is_final:
@@ -155,19 +161,27 @@ for exam_id, group in grouped:
                     # print("  Alert qabul qilinmadi (dismiss)")
                     alert.accept()          # "OK" / "Ha" / "Saqlash" ni tasdiqlash
                     print("  Alert qabul qilindi (accept)")
-                    time.sleep(1.5)
+                    time.sleep(1)
                 except TimeoutException:
                     print("  Alert chiqmadi (ehtimol bu safar yo'q)")
                 except Exception as e:
                     print("  Alert bilan muammo:", e)
 
-            time.sleep(2.5)
+            time.sleep(1)
         except Exception as e:
             print("Saqlash tugmasi topilmadi yoki bosib bo'lmadi:", e)
     else:
         print("Yangilanish yo'q")
 
-    time.sleep(1.8)
+    time.sleep(1)
+    
+# Topilmaganlarni Excel ga saqlash
+if len(not_found_inputs) > 0:
+    print("="*60)
+    print(f"📁 HEMISDA Topilmagan talabalar 'not_found_students.xlsx' fayliga saqlandi")
+    print("="*60)
+    not_found_df = pd.DataFrame(not_found_inputs)
+    not_found_df.to_excel("not_found_students.xlsx", index=False)
 
 print("\nBarcha examlar tugadi.")
 driver.quit()
