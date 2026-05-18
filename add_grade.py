@@ -11,7 +11,7 @@ from config import LOGIN_VALUE, PASSWORD_VALUE
 
 # ==================== O'ZGARUVCHILAR ====================
 EXCEL_FILE = "exam_report.xlsx"
-SHEET_NAME = "Sheet1"
+SHEET_NAME = "Imtihonlar"
 
 # Chrome sozlamalari
 options = webdriver.ChromeOptions()
@@ -92,7 +92,7 @@ for exam_id, group in grouped:
         url = f"https://hemis.timeedu.uz/teacher/check-overall-rating?id={exam_id}"
         input_suffix = "[13]"
         is_final = True
-    elif exam_type_code == 12:
+    elif exam_type_code == 12 or exam_type_code == 17 or exam_type_code == 18:
         url = f"https://hemis.timeedu.uz/teacher/check-rating?id={exam_id}"
         # yoki "[12]" agar bo'lsa, lekin oldingi kodda bo'sh edi
         input_suffix = ""
@@ -138,7 +138,11 @@ for exam_id, group in grouped:
             print(f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritilmadi")
             not_found_inputs.append({
                 "student_id": student_id,
-                "grade": grade
+                "student_hemis_id":  str(row['student_hemis_id']),
+                "student_full_name":  str(row['student_full_name']),
+                "group_name":  str(row['group_name']),
+                "subject_name":  str(row['subject_name']),
+                "grade": grade,
             })
 
     if updated > 0:
