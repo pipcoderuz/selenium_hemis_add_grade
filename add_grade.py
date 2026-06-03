@@ -3,7 +3,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, UnexpectedAlertPresentException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, UnexpectedAlertPresentException, InvalidElementStateException
 from selenium.webdriver.common.alert import Alert
 import time
 from config import LOGIN_VALUE, PASSWORD_VALUE
@@ -25,7 +25,8 @@ driver.get("https://hemis.timeedu.uz/")
 
 try:
     oneid_button = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.XPATH, "//a[contains(@href, '/auth/edu-id') or contains(text(), 'OneID')]"))
+        EC.element_to_be_clickable(
+            (By.XPATH, "//a[contains(@href, '/auth/edu-id') or contains(text(), 'OneID')]"))
     )
     oneid_button.click()
     print("OneID tugmasi bosildi")
@@ -35,7 +36,8 @@ except Exception as e:
     exit()
 
 try:
-    WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.NAME, "login")))
+    WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located((By.NAME, "login")))
     print("OneID forma yuklandi")
 except:
     print("OneID login maydoni topilmadi")
@@ -52,7 +54,8 @@ print("Parol kiritildi")
 
 try:
     submit_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Kirish') or @type='submit']"))
+        EC.element_to_be_clickable(
+            (By.XPATH, "//button[contains(text(), 'Kirish') or @type='submit']"))
     )
     submit_button.click()
     print("Kirish bosildi")
@@ -62,7 +65,8 @@ except Exception as e:
 time.sleep(1)
 
 try:
-    WebDriverWait(driver, 25).until( EC.presence_of_element_located((By.TAG_NAME, "body")))
+    WebDriverWait(driver, 25).until(
+        EC.presence_of_element_located((By.TAG_NAME, "body")))
     print("Dashboard yuklandi (kirish muvaffaqiyatli)")
 except:
     print("Kirishdan keyin sahifa yuklanmadi")
@@ -75,7 +79,6 @@ df = pd.read_excel(EXCEL_FILE, sheet_name=SHEET_NAME)
 df['grade'] = pd.to_numeric(df['grade'], errors='coerce').fillna(0).astype(int)
 
 # exam_type_code ni tekshirish uchun (har bir exam uchun bir xil deb faraz qilamiz)
-# Agar har bir exam_id ichida turli bo'lsa, group ichida ham tekshirish mumkin
 exam_types = df.groupby('exam_id')['exam_type_code'].first().to_dict()
 
 grouped = df.groupby('exam_id')
@@ -84,9 +87,12 @@ print(f"Jami {len(grouped)} ta exam topildi.")
 # ==================== Har bir exam uchun ishlash ====================
 print(str(grouped))
 not_found_inputs = []
+skipped_exams = []  # Skip qilingan examlarni hisobga olish uchun
+
 for exam_id, group in grouped:
     exam_type_code = exam_types.get(exam_id, None)
-    print(f"\n=== Exam ID: {exam_id} | Type: {exam_type_code} | Talabalar: {len(group)} ===")
+    print(
+        f"\n=== Exam ID: {exam_id} | Type: {exam_type_code} | Talabalar: {len(group)} ===")
 
     if exam_type_code == 13:
         url = f"https://hemis.timeedu.uz/teacher/check-overall-rating?id={exam_id}"
@@ -94,11 +100,11 @@ for exam_id, group in grouped:
         is_final = True
     elif exam_type_code == 12 or exam_type_code == 17 or exam_type_code == 18:
         url = f"https://hemis.timeedu.uz/teacher/check-rating?id={exam_id}"
-        # yoki "[12]" agar bo'lsa, lekin oldingi kodda bo'sh edi
         input_suffix = ""
         is_final = False
     else:
-        print(f"  → Noma'lum exam_type_code ({exam_type_code}), o'tkazib yuborildi")
+        print(
+            f"  → Noma'lum exam_type_code ({exam_type_code}), o'tkazib yuborildi")
         continue
 
     driver.get(url)
@@ -106,13 +112,16 @@ for exam_id, group in grouped:
 
     try:
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='number'].form-control"))
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "input[type='number'].form-control"))
         )
     except TimeoutException:
         print("  Sahifada baho inputlari topilmadi → o'tkazib yuborildi")
         continue
 
     updated = 0
+    exam_has_interactivity_issue = False  # Bu examda interaktivlik muammosi bormi?
+
     for _, row in group.iterrows():
         student_id = str(row['student_id'])
         grade = str(row['grade'])
@@ -123,35 +132,80 @@ for exam_id, group in grouped:
             selector = f"input[name='student_id\\[{student_id}\\]{input_suffix}']"
             input_field = driver.find_element(By.CSS_SELECTOR, selector)
 
+            # Input maydonini interaktivligini tekshirish
+            is_disabled = input_field.get_attribute(
+                "disabled") == "true" or input_field.get_attribute("readonly") == "true"
+
+            if is_disabled and exam_type_code == 13:
+                print(
+                    f"  ⚠ Exam ID {exam_id} (type 13) uchun baholar allaqachon qo'yilgan va o'zgartirib bo'lmaydi!")
+                print(f"  → Butun exam o'tkazib yuboriladi (skip)")
+                exam_has_interactivity_issue = True
+                break  # Butun examni skip qilamiz
+
             current_val = input_field.get_attribute("value") or ""
             # Yangi baho bilan solishtirish
             if current_val == grade:
-                print(f"  {row.get('student_full_name', '—')} ({student_id}) → bir xil ({grade}), o'zgartirish yo'q")
+                print(
+                    f"  {row.get('student_full_name', '—')} ({student_id}) → bir xil ({grade}), o'zgartirish yo'q")
                 continue
 
             # Farq bo'lsa yoki bo'sh bo'lsa → yangilash
             input_field.clear()
             input_field.send_keys(grade)
             updated += 1
-            print(f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritildi")
+            print(
+                f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritildi")
+
+        except InvalidElementStateException as e:
+            print(
+                f"  ✗ {row.get('student_full_name', '—')} ({student_id}) → Interaktiv emas (ehtimol bloklangan): {grade}")
+            if exam_type_code == 13:
+                print(
+                    f"  → Exam ID {exam_id} (type 13) uchun baholar bloklangan, butun exam skip qilinadi")
+                exam_has_interactivity_issue = True
+                break
+            else:
+                not_found_inputs.append({
+                    "student_id": student_id,
+                    "student_hemis_id": str(row['student_hemis_id']),
+                    "student_full_name": str(row['student_full_name']),
+                    "group_name": str(row['group_name']),
+                    "subject_name": str(row['subject_name']),
+                    "grade": grade,
+                    "error": str(e)
+                })
+
         except NoSuchElementException:
-            print(f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritilmadi")
+            print(
+                f"  {row.get('student_full_name', '—')} ({student_id}) → {grade} kiritilmadi (element topilmadi)")
             not_found_inputs.append({
                 "student_id": student_id,
-                "student_hemis_id":  str(row['student_hemis_id']),
-                "student_full_name":  str(row['student_full_name']),
-                "group_name":  str(row['group_name']),
-                "subject_name":  str(row['subject_name']),
+                "student_hemis_id": str(row['student_hemis_id']),
+                "student_full_name": str(row['student_full_name']),
+                "group_name": str(row['group_name']),
+                "subject_name": str(row['subject_name']),
                 "grade": grade,
+                "error": "Element not found"
             })
+
+    # Agar interaktivlik muammosi bo'lsa, saqlashni o'tkazib yuboramiz
+    if exam_has_interactivity_issue:
+        skipped_exams.append({
+            "exam_id": exam_id,
+            "exam_type_code": exam_type_code,
+            "reason": "Baholar allaqachon qo'yilgan va bloklangan (type 13 final exam)"
+        })
+        print(f"  → Exam {exam_id} skip qilindi (baholar bloklangan)")
+        continue  # Keyingi examga o'tamiz
 
     if updated > 0:
         try:
             save_btn = driver.find_element(
-                By.CSS_SELECTOR,"button[type='submit'].btn.btn-primary[name='btn']"
+                By.CSS_SELECTOR, "button[type='submit'].btn.btn-primary[name='btn']"
             )
             save_btn.click()
-            print(f"Saqlash bosildi ({updated} ta yangilandi)")
+            print(f"✓ Saqlash bosildi ({updated} ta yangilandi)")
             time.sleep(1)
 
             # Yakuniy nazorat uchun alertni qabul qilish
@@ -161,9 +215,7 @@ for exam_id, group in grouped:
                     alert = Alert(driver)
                     alert_text = alert.text
                     print(f"  Alert chiqdi: {alert_text}")
-                    # alert.dismiss()
-                    # print("  Alert qabul qilinmadi (dismiss)")
-                    alert.accept()          # "OK" / "Ha" / "Saqlash" ni tasdiqlash
+                    alert.accept()
                     print("  Alert qabul qilindi (accept)")
                     time.sleep(1)
                 except TimeoutException:
@@ -173,12 +225,12 @@ for exam_id, group in grouped:
 
             time.sleep(1)
         except Exception as e:
-            print("Saqlash tugmasi topilmadi yoki bosib bo'lmadi:", e)
+            print("✗ Saqlash tugmasi topilmadi yoki bosib bo'lmadi:", e)
     else:
-        print("Yangilanish yo'q")
+        print("  Yangilanish yo'q")
 
     time.sleep(1)
-    
+
 # Topilmaganlarni Excel ga saqlash
 if len(not_found_inputs) > 0:
     print("="*60)
@@ -187,5 +239,15 @@ if len(not_found_inputs) > 0:
     not_found_df = pd.DataFrame(not_found_inputs)
     not_found_df.to_excel("not_found_students.xlsx", index=False)
 
-print("\nBarcha examlar tugadi.")
+# Skip qilingan examlar haqida hisobot
+if len(skipped_exams) > 0:
+    print("\n" + "="*60)
+    print("⚠ SKIP QILINGAN EXAM LAR (baholar bloklangan):")
+    print("="*60)
+    skipped_df = pd.DataFrame(skipped_exams)
+    print(skipped_df.to_string(index=False))
+    skipped_df.to_excel("skipped_exams.xlsx", index=False)
+    print(f"\n📁 Skip qilingan examlar 'skipped_exams.xlsx' fayliga saqlandi")
+
+print("\n✅ Barcha examlar tugadi.")
 driver.quit()
