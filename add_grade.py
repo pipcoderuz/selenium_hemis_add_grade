@@ -98,6 +98,10 @@ for exam_id, group in grouped:
         url = f"https://hemis.timeedu.uz/teacher/check-overall-rating?id={exam_id}"
         input_suffix = "[13]"
         is_final = True
+    elif exam_type_code == 14:
+        url = f"https://hemis.timeedu.uz/teacher/check-overall?id={exam_id}"
+        input_suffix = ""
+        is_final = True
     elif exam_type_code == 12 or exam_type_code == 17 or exam_type_code == 18:
         url = f"https://hemis.timeedu.uz/teacher/check-rating?id={exam_id}"
         input_suffix = ""
