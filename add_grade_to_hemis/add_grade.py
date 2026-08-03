@@ -10,7 +10,7 @@ from config import LOGIN_VALUE, PASSWORD_VALUE
 
 
 # ==================== O'ZGARUVCHILAR ====================
-EXCEL_FILE = "exam_report.xlsx"
+EXCEL_FILE = "add_grade_to_hemis/exam_report.xlsx"
 SHEET_NAME = "Imtihonlar"
 
 # Chrome sozlamalari
@@ -238,10 +238,10 @@ for exam_id, group in grouped:
 # Topilmaganlarni Excel ga saqlash
 if len(not_found_inputs) > 0:
     print("="*60)
-    print(f"📁 HEMISDA Topilmagan talabalar 'not_found_students.xlsx' fayliga saqlandi")
+    print(f"📁 HEMISDA Topilmagan talabalar 'add_grade_to_hemis/not_found_students.xlsx' fayliga saqlandi")
     print("="*60)
     not_found_df = pd.DataFrame(not_found_inputs)
-    not_found_df.to_excel("not_found_students.xlsx", index=False)
+    not_found_df.to_excel("add_grade_to_hemis/not_found_students.xlsx", index=False)
 
 # Skip qilingan examlar haqida hisobot
 if len(skipped_exams) > 0:
@@ -250,8 +250,8 @@ if len(skipped_exams) > 0:
     print("="*60)
     skipped_df = pd.DataFrame(skipped_exams)
     print(skipped_df.to_string(index=False))
-    skipped_df.to_excel("skipped_exams.xlsx", index=False)
-    print(f"\n📁 Skip qilingan examlar 'skipped_exams.xlsx' fayliga saqlandi")
+    skipped_df.to_excel("add_grade_to_hemis/skipped_exams.xlsx", index=False)
+    print(f"\n📁 Skip qilingan examlar 'add_grade_to_hemis/skipped_exams.xlsx' fayliga saqlandi")
 
 print("\n✅ Barcha examlar tugadi.")
 driver.quit()

@@ -251,9 +251,8 @@ def create_exam_student_excel():
     if excel_data:
         df = pd.DataFrame(excel_data)
 
-        # Fayl nomi (sana va vaqt bilan)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"exam_report.xlsx"
+        # Fayl nomi
+        filename = f"add_grade_to_hemis/exam_report.xlsx"
 
         # Excel faylga saqlash
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
@@ -345,7 +344,7 @@ def fetch_single_group_data(group_id: int):
 
     if excel_data:
         df = pd.DataFrame(excel_data)
-        filename = f"hemis_exam_group_{group_id}.xlsx"
+        filename = f"add_grade_to_hemis/hemis_exam_group_{group_id}.xlsx"
         df.to_excel(filename, index=False)
         print(f"\n✅ Saqlandi: {filename}")
         print(f"📊 Yozuvlar soni: {len(df)}")
