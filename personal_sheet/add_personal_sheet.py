@@ -23,8 +23,10 @@ BUYRUK_SANASI_COLUMN = "buyruq_sanasi"
 FAN_COLUMN = "fan"
 
 MASUL_SHAXS = "SHARIPOV KAMRONBEK KONGRATBAYEVICH"
-SEMESTR = "10-semestr"
 OQITUVCHI = "SHOKIR"
+
+# Semestr endi dinamik: Sirtqi → 10-semestr, Kunduzgi → 8-semestr
+SEMESTR = "10-semestr"
 
 options = webdriver.ChromeOptions()
 options.add_argument("--start-maximized")
@@ -261,9 +263,11 @@ def nazorat_sanasi_yozish():
 
 # ==================== PTT TALABA QO'SHISH ====================
 def ptt_talaba_qoshish(row):
+    global SEMESTR
+
     try:
         hemis_id = str(row[HEMIS_ID_COLUMN]).strip()
-        buyruq_nomi = str(row[BUYRUK_NOMI_COLUMN]).strip()
+        buyruq_nomi = f"№ {str(row[BUYRUK_NOMI_COLUMN]).strip()}"
         buyruq_sanasi = str(row[BUYRUK_SANASI_COLUMN]).strip()
         fanlar = row[FAN_COLUMN]
 
@@ -295,36 +299,56 @@ def ptt_talaba_qoshish(row):
             print(f"  ✗ Qidiruv maydoni topilmadi: {e}")
             return False, "Qidiruv xatoligi"
 
-        # Buyruqni topib "Qo'shish" bosish
+        # Buyruqni topib "Qo'shish" bosish + Ta'lim turini o'qish
         try:
             rows = driver.find_elements(By.XPATH, "//table//tbody/tr")
             qoshish_topildi = False
+            talim_turi_text = ""
 
             for tr in rows:
                 try:
-                    td_6 = tr.find_element(By.XPATH, ".//td[6]")
-                    td_text = td_6.text.strip()
+                    cells = tr.find_elements(By.TAG_NAME, "td")
+                    if len(cells) < 7:
+                        continue
 
-                    if buyruq_nomi in td_text and buyruq_sanasi in td_text:
-                        # Qo'shish tugmasi bormi?
-                        qoshish_links = tr.find_elements(
-                            By.XPATH, ".//td[7]//a[contains(text(), \"Qo'shish\")]"
+                    # Guruh ustuni (indeks 5) — buyruq nomi va sanasi shu yerda
+                    guruh_text = cells[5].text.strip()
+
+                    if buyruq_nomi in guruh_text and buyruq_sanasi in guruh_text:
+                        # Ta'lim turi (indeks 3)
+                        talim_turi_text = cells[3].text.strip()
+                        print(
+                            f"  ✓ Ta'lim turi o'qildi: {talim_turi_text.replace(chr(10), ' / ')}")
+
+                        # Semestrni belgilash
+                        if "Sirtqi" in talim_turi_text:
+                            SEMESTR = "10-semestr"
+                        elif "Magistr" in talim_turi_text:
+                            # Magistr 
+                            SEMESTR = "4-semestr"
+                        else:
+                            # Kunduzgi yoki boshqa
+                            SEMESTR = "8-semestr"
+                        print(f"  ✓ Semestr belgilandi: {SEMESTR}")
+
+                        # Qo'shish tugmasi (indeks 6)
+                        qoshish_links = cells[6].find_elements(
+                            By.XPATH, ".//a[contains(text(), \"Qo'shish\")]"
                         )
                         if not qoshish_links:
-                            # Tugma yo'q → allaqachon yaratilgan
                             print(
                                 "  ✗ 'Qo'shish' tugmasi yo'q — shaxsiy qaydnoma allaqachon yaratilgan")
                             return False, "Shaxsiy qaydnoma buyruqda yaratilgan"
 
-                        td_7 = qoshish_links[0]
+                        td_qoshish = qoshish_links[0]
                         driver.execute_script(
-                            "arguments[0].scrollIntoView(true);", td_7)
+                            "arguments[0].scrollIntoView(true);", td_qoshish)
                         time.sleep(0.5)
-                        td_7.click()
+                        td_qoshish.click()
                         print("  ✓ 'Qo'shish' tugmasi bosildi")
                         qoshish_topildi = True
                         break
-                except:
+                except Exception:
                     continue
 
             if not qoshish_topildi:
@@ -337,7 +361,7 @@ def ptt_talaba_qoshish(row):
 
         time.sleep(2)
 
-        # Forma ochilganini tekshirish (oyna ochilmasa → allaqachon yaratilgan)
+        # Forma ochilganini tekshirish
         try:
             WebDriverWait(driver, 8).until(
                 EC.presence_of_element_located((By.ID, "estudentptt-date"))
@@ -376,7 +400,7 @@ def ptt_talaba_qoshish(row):
             print(f"  ✗ Mas'ul shaxsni tanlashda xatolik: {e}")
             return False, "Mas'ul shaxs xatoligi"
 
-        # Semestr
+        # Semestr (dinamik: Sirtqi=10, Kunduzgi=8)
         try:
             semester_select = WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.ID, "estudentptt-_semester"))
@@ -428,13 +452,6 @@ def ptt_talaba_qoshish(row):
             if not belgilangan:
                 print("  ✗ Hech qanday fan belgilanmadi!")
                 return False, "Fan topilmadi"
-
-            # Ba'zi fanlar topilmasa ham, hech bo'lmaganda biri belgilangan bo'lsa davom etamiz,
-            # lekin xatolik ro'yxatiga yozish uchun sabab qoldiramiz
-            if topilmagan:
-                # Hammasini belgilay olmadik — lekin ba'zilari belgilandi
-                # Agar siz "bitta ham topilmasa" deb hisoblasangiz, yuqoridagi return yetarli
-                pass
 
             print(f"  ✓ Jami {len(belgilangan)} ta fan belgilandi")
 

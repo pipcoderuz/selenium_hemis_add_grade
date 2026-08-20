@@ -29,6 +29,7 @@ options.add_experimental_option("useAutomationExtension", False)
 driver = webdriver.Chrome(options=options)
 driver.set_page_load_timeout(30)
 wait = WebDriverWait(driver, 10)
+short_wait = WebDriverWait(driver, 2)  # qisqa kutish
 
 natijalar = []
 muvaffaqiyatsizlar = []
@@ -221,15 +222,15 @@ def talaba_qayta_ishlash(row, index, total):
         except Exception as e:
             print(f"  ⚠ Telefon maydoni: {e}")
 
-        # Ariza shakllantirish
+        # Ariza shakllantirish — qisqa kutish (max 2 soniya)
         try:
-            ariza_btn = wait.until(EC.element_to_be_clickable(
+            ariza_btn = short_wait.until(EC.element_to_be_clickable(
                 (By.XPATH, "//button[.//span[text()='Ariza shakllantirish']]")))
             safe_click(ariza_btn)
             print("  ✅ 'Ariza shakllantirish' bosildi")
             time.sleep(0.5)
         except:
-            print("  ⚠ 'Ariza shakllantirish' topilmadi → davom etiladi")
+            print("  ⚠ 'Ariza shakllantirish' topilmadi → keyingi sahifaga o'tiladi")
 
         # ---------- 2. HIGH-COURSE-APPLICATIONS ----------
         driver.get(
@@ -256,13 +257,11 @@ def talaba_qayta_ishlash(row, index, total):
 
         # ---------- HOLATINI TEKSHIRISH ----------
         try:
-            # Holati qatorini topish
             holat_elements = driver.find_elements(
                 By.XPATH,
                 "//th[contains(., 'Holati')]/following-sibling::td//span[contains(@class, 'ant-tag')]"
             )
             if not holat_elements:
-                # Alternativ usul
                 holat_elements = driver.find_elements(
                     By.XPATH,
                     "//span[contains(@class, 'ant-tag') and (contains(text(), 'Tasdiqlangan') or contains(text(), 'Yangi'))]"
@@ -393,7 +392,6 @@ def main():
 
         time.sleep(0.4)
 
-    # Natijalar
     print("\n" + "=" * 60)
     print("📊 JARAYON YAKUNLANDI!")
     print("=" * 60)
