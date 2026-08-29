@@ -1,4 +1,5 @@
 .env
+__pycache__
 exam_report.xlsx
 order_students.xlsx
 simple_order_students.xlsx
@@ -16,3 +17,5 @@ not_found_personal_sheet_grades.xlsx
 personal_sheets.xlsx
 ptt_muvaffaqiyatsiz_talabalar.xlsx
 students.xlsx
+abiturients.xlsx
+talaba_yaratish_natija.xlsx
