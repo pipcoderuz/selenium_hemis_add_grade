@@ -692,7 +692,7 @@ def solve_captcha_create(max_retries: int = 5) -> bool:
             ))
             driver.execute_script("arguments[0].click();", search_btn)
             print(f"  ✓ Captcha yuborildi: {code}")
-            time.sleep(1.5)
+            time.sleep(0.8)
 
             if captcha_error_toast():
                 print("  ⚠ Himoya kodi noto'g'ri → qayta")
