@@ -321,7 +321,7 @@ def talaba_qayta_ishlash(row, index, total):
             sum_input.send_keys(Keys.CONTROL + "a")
             sum_input.send_keys(Keys.DELETE)
             sum_input.send_keys(summa)
-            time.sleep(0.3)
+            time.sleep(0.2)
             print(f"  ✅ Summa: {summa}")
         except Exception as e:
             return False, f"Summa yozilmadi: {e}"
@@ -332,14 +332,14 @@ def talaba_qayta_ishlash(row, index, total):
                 (By.XPATH, "//button[.//span[text()='Tasdiqlash'] and contains(@style,'rgb(23, 198, 83)')]")))
             safe_click(confirm_btn)
             print("  ✅ 'Tasdiqlash' bosildi")
-            time.sleep(0.8)
+            time.sleep(0.5)
         except Exception as e:
             try:
                 confirm_btn = driver.find_element(
                     By.XPATH, "//button[contains(@style,'background: rgb(23, 198, 83)')]//span[text()='Tasdiqlash']/..")
                 safe_click(confirm_btn)
                 print("  ✅ 'Tasdiqlash' bosildi (alt)")
-                time.sleep(0.8)
+                time.sleep(0.5)
             except:
                 return False, f"Tasdiqlash tugmasi topilmadi: {e}"
 

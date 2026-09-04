@@ -938,11 +938,12 @@ def process_student(row) -> tuple[bool, str]:
         if not select2_by_text("_department", fakultet, partial=True):
             return False, f"Fakultet topilmadi: {fakultet}"
 
-        if not select2_by_text("_decree_info_enroll", farmoyish, partial=True, wait_opts=20):
-            return False, f"Farmoyish topilmadi: {farmoyish}"
 
         if not select2_by_text("_specialty", specialty, partial=True, wait_opts=20):
             return False, f"Mutaxassislik topilmadi: {specialty}"
+        
+        if not select2_by_text("_decree_info_enroll", farmoyish, partial=True, wait_opts=20):
+            return False, f"Farmoyish topilmadi: {farmoyish}"
 
         try:
             p_inp = wait.until(EC.presence_of_element_located(
