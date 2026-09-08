@@ -344,7 +344,7 @@ def main():
             print(
                 f"  - {r.get('fio') or r.get('pin')}: {r.get('xabar')[:140]}")
 
-    out = "hemis_order/jshshir_saqlash_natija.xlsx"
+    out = "hemis_order/hemis_err_natija.xlsx"
     pd.DataFrame(results).to_excel(out, index=False)
     print(f"\n📄 Natija: {out}")
     driver.quit()

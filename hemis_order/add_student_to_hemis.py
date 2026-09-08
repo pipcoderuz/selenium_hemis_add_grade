@@ -3,7 +3,6 @@ import base64
 import re
 import time
 import io
-from datetime import datetime
 from collections import defaultdict
 
 from selenium import webdriver
@@ -11,7 +10,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import TimeoutException
 
 from PIL import Image, ImageOps, ImageFilter
 import numpy as np
@@ -27,8 +25,8 @@ SHEET_NAME = "talabalar"
 
 COL_FIO = "fio"
 COL_FAKULTET = "fakultet"
-COL_FARMOYISH = "farmoyish"
-COL_SPECIALTY = "specialty"
+COL_SPECIALTY_CODE = "specialty_code"
+COL_SPECIALTY_NAME = "specialty_name"
 COL_PASSPORT = "passport_number"
 COL_PIN = "passport_pin"
 COL_PHONE = "phone"
@@ -107,8 +105,10 @@ def login() -> bool:
 # ==================== EXCEL ====================
 def load_excel():
     df = pd.read_excel(EXCEL_FILE, sheet_name=SHEET_NAME)
-    required = [COL_FAKULTET, COL_FARMOYISH,
-                COL_SPECIALTY, COL_PASSPORT, COL_PIN, COL_PHONE]
+    required = [
+        COL_FAKULTET, COL_SPECIALTY_CODE,
+        COL_PASSPORT, COL_PIN, COL_PHONE
+    ]
     for col in required:
         if col not in df.columns:
             raise ValueError(
@@ -228,13 +228,22 @@ def select2_by_text(select_id: str, search_text: str, partial: bool = True, wait
         var partial = arguments[2];
         if (!el) return {ok:false, reason:'element_yoq'};
 
+        function norm(s) {
+            s = (s || '').toLowerCase().trim();
+            s = s.replace(/[‘’ʻʼ`´]/g, "'");
+            s = s.replace(/[–—−]/g, '-');
+            s = s.replace(/\\s+/g, ' ');
+            return s;
+        }
+        needle = norm(needle);
+
         var val = null, txt = null;
         for (var i = 0; i < el.options.length; i++) {
             var o = el.options[i];
             var v = (o.value || '').trim();
             var t = (o.textContent || o.innerText || '').trim();
             if (!v) continue;
-            var tl = t.toLowerCase();
+            var tl = norm(t);
             if (partial) {
                 if (tl.indexOf(needle) !== -1) { val = v; txt = t; break; }
             } else {
@@ -276,12 +285,182 @@ def select2_by_text(select_id: str, search_text: str, partial: bool = True, wait
     return True
 
 
+def select_specialty_by_code(code: str, name: str = "", wait_opts: int = 40) -> bool:
+    """
+    Kod bir xil bo'lsa (60410100 x2) — specialty_name bilan aniq tanlaydi.
+    Masalan: code=60410100, name=Iqtisod → '60410100 - Iqtisodiyot'
+    """
+    code = re.sub(r"\D", "", str(code or ""))
+    name = (name or "").strip()
+    if not code:
+        print("  ⚠ specialty_code bo'sh")
+        return False
+
+    loaded = False
+    for i in range(wait_opts):
+        info = driver.execute_script("""
+            var el = document.getElementById('_specialty');
+            if (!el) return {count: 0, hasCode: false};
+            var code = arguments[0];
+            var c = 0, hasCode = false;
+            for (var i = 0; i < el.options.length; i++) {
+                var v = (el.options[i].value || '').trim();
+                var t = (el.options[i].textContent || el.options[i].innerText || '');
+                if (!v) continue;
+                c++;
+                if (t.indexOf(code) !== -1) hasCode = true;
+            }
+            return {count: c, hasCode: hasCode};
+        """, code)
+        if info and info.get("count", 0) > 0 and info.get("hasCode"):
+            loaded = True
+            print(f"  ℹ Mutaxassisliklar yuklandi: {info.get('count')} ta")
+            break
+        if info and info.get("count", 0) > 1 and i > 10:
+            loaded = True
+            print(f"  ℹ Optionlar: {info.get('count')}")
+            break
+        time.sleep(0.35)
+
+    if not loaded:
+        print("  ⚠ Mutaxassislik optionlari yuklanmadi")
+        return False
+
+    result = driver.execute_script("""
+        var el = document.getElementById('_specialty');
+        var code = (arguments[0] || '').trim();
+        var name = (arguments[1] || '').trim();
+        if (!el) return {ok:false, reason:'element_yoq'};
+
+        function norm(s) {
+            s = (s || '').toLowerCase().trim();
+            s = s.replace(/[‘’ʻʼ`´]/g, "'");
+            s = s.replace(/[–—−]/g, '-');
+            s = s.replace(/\\s+/g, ' ');
+            return s;
+        }
+        var nameN = norm(name);
+
+        // Barcha optionlar
+        var items = [];
+        for (var i = 0; i < el.options.length; i++) {
+            var o = el.options[i];
+            var v = (o.value || '').trim();
+            var t = (o.textContent || o.innerText || '').trim();
+            if (!v) continue;
+            items.push({v: v, t: t, tn: norm(t)});
+        }
+
+        var val = null, txt = null, how = '';
+
+        // 1) KOD + NOM (eng yaxshi)
+        if (code && nameN) {
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                if (it.t.indexOf(code) === -1) continue;
+                // nom: "Iqtisod" ⊆ "iqtisodiyot" yoki to'liq
+                if (it.tn.indexOf(nameN) !== -1 || nameN.indexOf(it.tn.split(' - ').pop() || '') !== -1) {
+                    val = it.v; txt = it.t; how = 'code+name'; break;
+                }
+            }
+            // qo'shimcha: faqat nom qismi (tire dan keyin)
+            if (!val) {
+                for (var i = 0; i < items.length; i++) {
+                    var it = items[i];
+                    if (it.t.indexOf(code) === -1) continue;
+                    var after = it.tn;
+                    var dash = it.tn.indexOf(' - ');
+                    if (dash !== -1) after = it.tn.substring(dash + 3);
+                    if (after.indexOf(nameN) !== -1 || nameN.indexOf(after) !== -1) {
+                        val = it.v; txt = it.t; how = 'code+name_after'; break;
+                    }
+                }
+            }
+        }
+
+        // 2) Faqat NOM (kod mos kelmasa ham)
+        if (!val && nameN) {
+            for (var i = 0; i < items.length; i++) {
+                var it = items[i];
+                var after = it.tn;
+                var dash = it.tn.indexOf(' - ');
+                if (dash !== -1) after = it.tn.substring(dash + 3);
+                if (after.indexOf(nameN) !== -1 || it.tn.indexOf(nameN) !== -1) {
+                    val = it.v; txt = it.t; how = 'name_only'; break;
+                }
+            }
+        }
+
+        // 3) Faqat KOD — faqat bitta option bo'lsa yoki name bo'sh
+        if (!val && code) {
+            var codeHits = [];
+            for (var i = 0; i < items.length; i++) {
+                if (items[i].t.indexOf(code) !== -1) codeHits.push(items[i]);
+            }
+            if (codeHits.length === 1) {
+                val = codeHits[0].v; txt = codeHits[0].t; how = 'code_single';
+            } else if (codeHits.length > 1 && !nameN) {
+                // name yo'q — birinchisi (eski xulq)
+                val = codeHits[0].v; txt = codeHits[0].t; how = 'code_first_no_name';
+            } else if (codeHits.length > 1 && nameN) {
+                return {
+                    ok: false,
+                    reason: 'code_ambiguous_name_not_matched',
+                    count: codeHits.length,
+                    name: name,
+                    sample: codeHits.map(function(x){ return x.t; })
+                };
+            }
+        }
+
+        if (!val) {
+            return {
+                ok: false,
+                reason: 'option_topilmadi',
+                count: items.length,
+                sample: items.slice(0, 6).map(function(x){ return x.t; })
+            };
+        }
+
+        el.value = val;
+        if (window.jQuery) {
+            var $el = jQuery(el);
+            $el.val(val).trigger('change');
+            try { $el.trigger('select2:select'); } catch(e) {}
+            try {
+                var $s2 = $el.next('.select2-container').find('.select2-selection__rendered');
+                if ($s2.length) {
+                    $s2.text(txt).removeClass('select2-selection__placeholder').attr('title', txt);
+                }
+            } catch(e) {}
+        }
+        el.dispatchEvent(new Event('change', {bubbles:true}));
+        el.dispatchEvent(new Event('input', {bubbles:true}));
+        el.setAttribute('aria-invalid', 'false');
+        var fg = el.closest('.form-group');
+        if (fg) {
+            fg.classList.remove('has-error');
+            var hb = fg.querySelector('.help-block');
+            if (hb) hb.innerHTML = '';
+        }
+        return {ok:true, value: val, text: txt, how: how};
+    """, code, name)
+
+    if not result or not result.get("ok"):
+        print(
+            f"  ⚠ Specialty tanlanmadi: code={code!r} name={name!r} → {result}")
+        return False
+
+    print(f"  ✓ Specialty: {result.get('text')}  [{result.get('how')}]")
+    time.sleep(0.5)
+    return True
+
+
 def select_first_if_empty(select_id: str, label: str = "") -> bool:
     try:
         result = driver.execute_script("""
             var el = document.getElementById(arguments[0]);
             if (!el) return {ok:false, reason:'element_yoq'};
-
             var current = (el.value || '').trim();
             if (current) {
                 var curTxt = '';
@@ -293,52 +472,33 @@ def select_first_if_empty(select_id: str, label: str = "") -> bool:
                 }
                 return {ok:true, skipped:true, value: current, text: curTxt};
             }
-
             var val = null, txt = null;
             for (var i = 0; i < el.options.length; i++) {
                 var o = el.options[i];
                 var v = (o.value || '').trim();
                 var t = (o.textContent || o.innerText || '').trim();
                 if (!v) continue;
-                var tl = t.toLowerCase();
-                if (tl.indexOf('tanlang') !== -1) continue;
+                if (t.toLowerCase().indexOf('tanlang') !== -1) continue;
                 val = v; txt = t; break;
             }
-            if (!val) return {ok:false, reason:'option_yoq', count: el.options.length};
-
+            if (!val) return {ok:false, reason:'option_yoq'};
             el.value = val;
             if (window.jQuery) {
                 var $el = jQuery(el);
                 $el.val(val).trigger('change');
                 try { $el.trigger('select2:select'); } catch(e) {}
-                try {
-                    var $s2 = $el.next('.select2-container').find('.select2-selection__rendered');
-                    if ($s2.length) {
-                        $s2.text(txt).removeClass('select2-selection__placeholder').attr('title', txt);
-                    }
-                } catch(e) {}
             }
             el.dispatchEvent(new Event('change', {bubbles:true}));
-            el.dispatchEvent(new Event('input', {bubbles:true}));
-            el.setAttribute('aria-invalid', 'false');
-            var fg = el.closest('.form-group');
-            if (fg) {
-                fg.classList.remove('has-error');
-                var hb = fg.querySelector('.help-block');
-                if (hb) hb.innerHTML = '';
-            }
-            return {ok:true, skipped:false, value: el.value, text: txt, count: el.options.length};
+            return {ok:true, skipped:false, value: el.value, text: txt};
         """, select_id)
 
         if not result or not result.get("ok"):
             print(f"  ⚠ {label or select_id}: {result}")
             return False
-
         if result.get("skipped"):
             print(f"  ℹ {label or select_id} allaqachon: {result.get('text')}")
         else:
-            print(
-                f"  ✓ {label or select_id}: {result.get('text')} ({result.get('value')})")
+            print(f"  ✓ {label or select_id}: {result.get('text')}")
         time.sleep(0.7)
         return True
     except Exception as e:
@@ -348,15 +508,6 @@ def select_first_if_empty(select_id: str, label: str = "") -> bool:
 
 def select_any_terrain() -> bool:
     try:
-        try:
-            field = driver.find_element(
-                By.CSS_SELECTOR, ".field-_terrain, #_terrain")
-            driver.execute_script(
-                "arguments[0].scrollIntoView({block:'center'});", field)
-            time.sleep(0.2)
-        except Exception:
-            pass
-
         for _ in range(15):
             n = driver.execute_script("""
                 var el = document.getElementById('_terrain');
@@ -381,34 +532,20 @@ def select_any_terrain() -> bool:
                 var t=(o.textContent||o.innerText||'').trim();
                 if (v && t && t.toLowerCase()!=='tanlash'){ val=v; txt=t; break; }
             }
-            if (!val) return {ok:false, reason:'option_yoq', count:el.options.length};
+            if (!val) return {ok:false, reason:'option_yoq'};
             el.value = val;
             if (window.jQuery) {
                 var $el = jQuery(el);
                 $el.val(val).trigger('change');
                 try { $el.trigger('select2:select'); } catch(e){}
-                try {
-                    var $s2 = $el.next('.select2-container').find('.select2-selection__rendered');
-                    if ($s2.length) {
-                        $s2.text(txt).removeClass('select2-selection__placeholder').attr('title', txt);
-                    }
-                } catch(e){}
             }
             el.dispatchEvent(new Event('change', {bubbles:true}));
-            el.setAttribute('aria-invalid','false');
-            var fg = el.closest('.form-group, .field-_terrain');
-            if (fg) {
-                fg.classList.remove('has-error');
-                var hb = fg.querySelector('.help-block');
-                if (hb) hb.innerHTML = '';
-            }
-            return {ok:true, value:el.value, text:txt, count:el.options.length};
+            return {ok:true, value:el.value, text:txt};
         """)
-
         if not result or not result.get("ok"):
             print(f"  ⚠ Terrain: {result}")
             return False
-        print(f"  ✓ Terrain: {result.get('text')} ({result.get('value')})")
+        print(f"  ✓ Terrain: {result.get('text')}")
         return True
     except Exception as e:
         print(f"  ⚠ Terrain xato: {e}")
@@ -425,22 +562,13 @@ def fill_if_empty(input_id: str, value: str, label: str = "") -> bool:
             el.value = arguments[1];
             el.dispatchEvent(new Event('input', {bubbles:true}));
             el.dispatchEvent(new Event('change', {bubbles:true}));
-            el.setAttribute('aria-invalid', 'false');
-            var fg = el.closest('.form-group');
-            if (fg) {
-                fg.classList.remove('has-error');
-                var hb = fg.querySelector('.help-block');
-                if (hb) hb.innerHTML = '';
-            }
             return {ok:true, skipped:false, value: el.value};
         """, input_id, value)
-
         if not result or not result.get("ok"):
             print(f"  ⚠ {label or input_id}: {result}")
             return False
         if result.get("skipped"):
-            print(
-                f"  ℹ {label or input_id} allaqachon: {result.get('value')[:40]}")
+            print(f"  ℹ {label or input_id} allaqachon")
         else:
             print(f"  ✓ {label or input_id}: {value}")
         return True
@@ -558,15 +686,60 @@ def ocr_captcha_combined(b64_data: str) -> str:
     return best
 
 
-def captcha_error_toast() -> bool:
+# ==================== TOAST / CAPTCHA ====================
+def _collect_toasts_js() -> list:
     try:
-        for el in driver.find_elements(By.CSS_SELECTOR, ".toast-error .toast-message"):
-            t = (el.text or "").lower()
-            if "himoya" in t or "noto" in t or "kod" in t:
-                return True
+        texts = driver.execute_script("""
+            var out = [], seen = {};
+            function add(t) {
+                t = (t || '').replace(/\\s+/g, ' ').trim();
+                if (!t || t.length < 3 || seen[t]) return;
+                seen[t] = true;
+                out.push(t);
+            }
+            document.querySelectorAll(
+                '#toast-container .toast-message, #toast-container .toast, ' +
+                '.toast-message, .toast-success, .toast-error'
+            ).forEach(function(el) {
+                add(el.innerText || el.textContent);
+            });
+            var c = document.getElementById('toast-container');
+            if (c) add(c.innerText || c.textContent);
+            return out;
+        """) or []
+        return [t for t in texts if t]
     except Exception:
-        pass
-    return False
+        return []
+
+
+def clear_toasts():
+    driver.execute_script("""
+        var c = document.getElementById('toast-container');
+        if (c) c.innerHTML = '';
+        document.querySelectorAll('.toast').forEach(function(t){ t.remove(); });
+    """)
+
+
+def wait_captcha_result_toast(max_wait: float = 15.0) -> str:
+    end = time.time() + max_wait
+    while time.time() < end:
+        for t in _collect_toasts_js():
+            low = t.lower()
+            if "himoya" in low and ("noto" in low or "noto‘g" in low or "notog" in low):
+                print(f"  ❌ Captcha toast: {t}")
+                return "error"
+            if "noto‘g‘ri" in low or "notog'ri" in low or "noto'g'ri" in low:
+                if "himoya" in low or "kod" in low:
+                    print(f"  ❌ Captcha toast: {t}")
+                    return "error"
+            if "passport" in low and ("topildi" in low or "ma'lumot" in low or "ma‘lumot" in low):
+                print(f"  ✅ Captcha toast: {t}")
+                return "success"
+            if "passport ma'lumotlari topildi" in low or "passport ma‘lumotlari topildi" in low:
+                print(f"  ✅ Captcha toast: {t}")
+                return "success"
+        time.sleep(0.25)
+    return "timeout"
 
 
 def close_captcha_modal():
@@ -590,6 +763,7 @@ def close_captcha_modal():
 
 def open_captcha_modal() -> bool:
     close_captcha_modal()
+    clear_toasts()
 
     btn = None
     selectors = [
@@ -658,7 +832,7 @@ def open_captcha_modal() -> bool:
         return False
 
 
-def solve_captcha_create(max_retries: int = 5) -> bool:
+def solve_captcha_create(max_retries: int = 12) -> bool:
     for attempt in range(1, max_retries + 1):
         try:
             if not open_captcha_modal():
@@ -681,6 +855,8 @@ def solve_captcha_create(max_retries: int = 5) -> bool:
                 close_captcha_modal()
                 continue
 
+            clear_toasts()
+
             inp = wait.until(
                 EC.presence_of_element_located((By.ID, "captcha")))
             inp.clear()
@@ -692,15 +868,23 @@ def solve_captcha_create(max_retries: int = 5) -> bool:
             ))
             driver.execute_script("arguments[0].click();", search_btn)
             print(f"  ✓ Captcha yuborildi: {code}")
-            time.sleep(0.8)
 
-            if captcha_error_toast():
-                print("  ⚠ Himoya kodi noto'g'ri → qayta")
+            status = wait_captcha_result_toast(max_wait=12.0)
+
+            if status == "success":
+                print("  ✅ Passport ma'lumotlari topildi")
+                close_captcha_modal()
+                return True
+
+            if status == "error":
+                print("  ⚠ Himoya kodi noto'g'ri → qayta urinish")
                 close_captcha_modal()
                 time.sleep(0.5)
                 continue
 
-            return True
+            print("  ⚠ Captcha toast timeout → qayta")
+            close_captcha_modal()
+            time.sleep(0.4)
 
         except Exception as e:
             print(f"  ⚠ [{attempt}] captcha xato: {e}")
@@ -767,7 +951,6 @@ def check_student_exists_modal(timeout: float = 2.5) -> str | None:
                 except Exception:
                     close_any_modal("studentModal")
                 return "Talaba hemisda mavjud"
-
         except Exception:
             pass
         time.sleep(0.2)
@@ -820,25 +1003,17 @@ def click_save() -> bool:
 
 
 def wait_save_result(timeout: float = 4.0) -> tuple[bool, str]:
-    """
-    Saqlashdan keyin toastlarni o'qiydi.
-    Success + HEMIS_ERROR birga chiqsa → HEMIS_ERROR (xato).
-    Faqat success bo'lsa → muvaffaqiyatli.
-    """
     end = time.time() + timeout
     success_msg = None
     error_msg = None
 
     while time.time() < end:
         try:
-            # --- barcha toast-message larni yig'ish ---
             for el in driver.find_elements(By.CSS_SELECTOR, ".toast-message"):
                 t = (el.text or "").strip()
                 if not t:
                     continue
                 low = t.lower()
-
-                # HEMIS_ERROR / boshqa OTMda o'qiydi
                 if (
                     "hemis_error" in low
                     or "o'qiydi" in low
@@ -849,15 +1024,12 @@ def wait_save_result(timeout: float = 4.0) -> tuple[bool, str]:
                     if not error_msg:
                         error_msg = t
                     continue
-
-                # muvaffaqiyat
                 if any(w in low for w in [
                     "muvaffaqiyatli", "saqlandi", "qo'shildi", "yaratildi"
                 ]):
                     if not success_msg:
                         success_msg = t
 
-            # toast-error container (message classsiz bo'lishi mumkin)
             for el in driver.find_elements(By.CSS_SELECTOR, ".toast-error"):
                 t = (el.text or "").strip()
                 if not t:
@@ -869,7 +1041,6 @@ def wait_save_result(timeout: float = 4.0) -> tuple[bool, str]:
                     if not error_msg:
                         error_msg = t
 
-            # toast-success
             for el in driver.find_elements(By.CSS_SELECTOR, ".toast-success"):
                 t = (el.text or "").strip()
                 if not t:
@@ -880,36 +1051,30 @@ def wait_save_result(timeout: float = 4.0) -> tuple[bool, str]:
                 ]):
                     if not success_msg:
                         success_msg = t
-
         except Exception:
             pass
 
-        # HEMIS_ERROR topilgan bo'lsa — darhol xato (success bo'lsa ham)
         if error_msg:
-            print(
-                f"  ❌ HEMIS_ERROR (success bilan birga bo'lishi mumkin): {error_msg}")
+            print(f"  ❌ HEMIS_ERROR: {error_msg}")
             return False, error_msg
-
-        # Faqat success
         if success_msg:
             print(f"  ✅ Toast: {success_msg}")
             return True, success_msg
-
         time.sleep(0.25)
 
-    # timeout: oxirgi holat
     if error_msg:
         return False, error_msg
     if success_msg:
         return True, success_msg
     return False, "Saqlashdan keyin muvaffaqiyat toast chiqmadi"
 
+
 # ==================== BITTA TALABA ====================
 def process_student(row) -> tuple[bool, str]:
     fio = _s(row, COL_FIO)
     fakultet = _s(row, COL_FAKULTET)
-    farmoyish = _s(row, COL_FARMOYISH)
-    specialty = _s(row, COL_SPECIALTY)
+    spec_code = _s(row, COL_SPECIALTY_CODE)
+    spec_name = _s(row, COL_SPECIALTY_NAME)
     passport = _s(row, COL_PASSPORT)
     pin = _s(row, COL_PIN)
     phone = _s(row, COL_PHONE)
@@ -938,12 +1103,8 @@ def process_student(row) -> tuple[bool, str]:
         if not select2_by_text("_department", fakultet, partial=True):
             return False, f"Fakultet topilmadi: {fakultet}"
 
-
-        if not select2_by_text("_specialty", specialty, partial=True, wait_opts=20):
-            return False, f"Mutaxassislik topilmadi: {specialty}"
-        
-        if not select2_by_text("_decree_info_enroll", farmoyish, partial=True, wait_opts=20):
-            return False, f"Farmoyish topilmadi: {farmoyish}"
+        if not select_specialty_by_code(spec_code, spec_name, wait_opts=40):
+            return False, f"Mutaxassislik topilmadi: {spec_code} / {spec_name}"
 
         try:
             p_inp = wait.until(EC.presence_of_element_located(
@@ -963,7 +1124,7 @@ def process_student(row) -> tuple[bool, str]:
         except Exception as e:
             return False, f"PIN maydoni: {e}"
 
-        if not solve_captcha_create(max_retries=5):
+        if not solve_captcha_create(max_retries=12):
             return False, "Captcha yechilmadi"
 
         exists_msg = check_student_exists_modal(timeout=2.5)
@@ -1031,8 +1192,8 @@ def main():
             "passport": _s(row, COL_PASSPORT),
             "pin": _s(row, COL_PIN),
             "fakultet": _s(row, COL_FAKULTET),
-            "farmoyish": _s(row, COL_FARMOYISH),
-            "specialty": _s(row, COL_SPECIALTY),
+            "specialty_code": _s(row, COL_SPECIALTY_CODE),
+            "specialty_name": _s(row, COL_SPECIALTY_NAME),
             "status": "Muvaffaqiyatli" if success else "Xato",
             "xabar": msg,
         })
@@ -1050,7 +1211,6 @@ def main():
     print(f"Jami: {total} | ✅ {ok_count} | ❌ {fail_count}")
     print("=" * 60)
 
-    # HEMIS_ERROR larni alohida xulosa
     hemis_errs = [
         r for r in results
         if r["status"] == "Xato" and "HEMIS_ERROR" in str(r.get("xabar", "")).upper()
