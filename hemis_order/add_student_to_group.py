@@ -31,6 +31,29 @@ wait = WebDriverWait(driver, 15)
 results = []
 
 
+# ==================== YORDAMCHI: Excel float → toza string ====================
+def clean_id(value) -> str:
+    """
+    Excel 715 ni 715.0 qilib o'qiydi → '715' qaytaradi.
+    PIN, buyruq_id va boshqa ID lar uchun.
+    """
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    if isinstance(value, float):
+        # 715.0 → 715
+        if value == int(value):
+            return str(int(value))
+        return str(value).strip()
+    s = str(value).strip()
+    # "715.0" → "715"
+    if re.fullmatch(r"\d+\.0+", s):
+        return s.split(".")[0]
+    # "715.000" ham
+    if re.fullmatch(r"\d+\.0*", s):
+        return s.split(".")[0]
+    return s
+
+
 # ==================== LOGIN ====================
 def login() -> bool:
     print("Login...")
@@ -65,26 +88,39 @@ def load_excel():
                 f"'{col}' ustuni yo'q. Mavjud: {list(df.columns)}")
 
     df = df.dropna(subset=[COL_PIN])
-    df[COL_PIN] = df[COL_PIN].astype(str).str.strip()
-    df[COL_BUYRUK_ID] = df[COL_BUYRUK_ID].astype(str).str.strip()
+
+    # Float .0 ni olib tashlash
+    df[COL_PIN] = df[COL_PIN].apply(clean_id)
+    df[COL_BUYRUK_ID] = df[COL_BUYRUK_ID].apply(clean_id)
     df[COL_GURUH] = df[COL_GURUH].astype(str).str.strip()
+
     df = df[df[COL_PIN] != ""]
     print(f"Excel: {len(df)} ta qator")
+    # Tekshiruv
+    if len(df) > 0:
+        print(f"  Namuna buyruq_id: {df[COL_BUYRUK_ID].iloc[0]!r}")
+        print(f"  Namuna pin: {df[COL_PIN].iloc[0]!r}")
     return df
 
 
 def _s(row, col, default=""):
     if col not in row.index or pd.isna(row.get(col)):
         return default
+    # buyruq_id va pin uchun clean_id
+    if col in (COL_BUYRUK_ID, COL_PIN):
+        return clean_id(row[col])
     return str(row[col]).strip()
 
 
 # ==================== YORDAMCHI ====================
 def decree_url(buyruq_id: str) -> str:
+    # id=715.0 bo'lib ketmasligi uchun
+    buyruq_id = clean_id(buyruq_id)
     return f"{BASE_URL}/decree/edu-decree-edit-students?id={buyruq_id}"
 
 
 def clear_filters(buyruq_id: str):
+    buyruq_id = clean_id(buyruq_id)
     try:
         btn = driver.find_elements(
             By.XPATH,
@@ -101,6 +137,7 @@ def clear_filters(buyruq_id: str):
 
 
 def search_student(pin: str) -> bool:
+    pin = clean_id(pin)
     try:
         inp = wait.until(EC.presence_of_element_located(
             (By.ID, "edecreeinfostudentmeta-search")))
@@ -123,6 +160,7 @@ def search_student(pin: str) -> bool:
         inp.send_keys(pin)
         inp.send_keys(Keys.ENTER)
         time.sleep(1.0)
+        print(f"  ✓ Qidiruv: {pin}")
         return True
     except Exception as e:
         print(f"  ⚠ Qidiruv: {e}")
@@ -204,10 +242,6 @@ def select2_first_or_by_text(
 
 
 def wait_group_options_loaded(guruh: str = "", max_wait: float = 20.0) -> bool:
-    """
-    O'quv rejadan keyin admission_group optionlari yuklanishini kutadi.
-    Agar guruh berilgan bo'lsa — shu matn optionlarda paydo bo'lguncha kutadi.
-    """
     end = time.time() + max_wait
     needle = (guruh or "").strip().lower()
 
@@ -231,7 +265,6 @@ def wait_group_options_loaded(guruh: str = "", max_wait: float = 20.0) -> bool:
             if not needle or info.get("hasText"):
                 print(f"  ℹ Guruh optionlari yuklandi: {info.get('count')} ta")
                 return True
-            # optionlar bor lekin kerakli guruh hali yo'q — kutishda davom
         time.sleep(0.35)
 
     print("  ⚠ Guruh optionlari yuklanmadi / topilmadi")
@@ -349,9 +382,6 @@ def _collect_toasts_js() -> list:
 
 
 def wait_success_toast(max_wait: float = 30.0) -> tuple[bool, str]:
-    """
-    'Hujjatga 1 nafar talaba muvaffaqiyatli qo'shildi' chiqmaguncha kutadi.
-    """
     end = time.time() + max_wait
     error_msg = None
     any_toast = None
@@ -395,8 +425,8 @@ def wait_success_toast(max_wait: float = 30.0) -> tuple[bool, str]:
 
 # ==================== BITTA TALABA ====================
 def process_student(row) -> tuple[bool, str]:
-    buyruq_id = _s(row, COL_BUYRUK_ID)
-    pin = _s(row, COL_PIN)
+    buyruq_id = _s(row, COL_BUYRUK_ID)   # clean_id orqali → "715"
+    pin = _s(row, COL_PIN)               # clean_id orqali
     guruh = _s(row, COL_GURUH)
     fio = _s(row, COL_FIO)
 
@@ -407,6 +437,7 @@ def process_student(row) -> tuple[bool, str]:
         return False, "buyruq_id / pin / guruh bo'sh"
 
     try:
+        # URL: ...?id=715  (715.0 emas)
         driver.get(decree_url(buyruq_id))
         time.sleep(1.0)
 
@@ -420,7 +451,7 @@ def process_student(row) -> tuple[bool, str]:
         ):
             return False, "O'quv reja tanlanmadi"
 
-        # 3) Guruh optionlari yuklanishini kutish (reja tanlangandan keyin)
+        # 3) Guruh optionlari yuklanishini kutish
         if not wait_group_options_loaded(guruh, max_wait=20.0):
             return False, f"Guruh optionlari yuklanmadi: {guruh}"
 
@@ -434,7 +465,6 @@ def process_student(row) -> tuple[bool, str]:
         if not check_student_row():
             return False, "Talaba checkbox topilmadi"
 
-        # eski toast tozalash
         clear_toasts()
 
         # 6) OK
@@ -445,7 +475,7 @@ def process_student(row) -> tuple[bool, str]:
         if not accept_confirm_alert(timeout=6.0):
             print("  ℹ Alert yo'q — toast kutamiz")
 
-        # 8) Success toast chiqmaguncha kutish
+        # 8) Success toast
         ok, toast_msg = wait_success_toast(max_wait=30.0)
         if not ok:
             try:
